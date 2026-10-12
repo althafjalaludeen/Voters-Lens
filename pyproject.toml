@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voterlens"
+version = "0.1.0"
+description = "Offline-first localized electoral-roll search and field-verification engine"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "sqlalchemy>=2.0.0",
+    "pymupdf>=1.23.0",
+    "pillow>=10.0.0",
+    "pydantic>=2.0.0",
+    "opencv-python-headless>=4.8.0",
+    "pytesseract>=0.3.10",
+    "cryptography>=41.0.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
