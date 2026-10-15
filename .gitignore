@@ -1,34 +1,128 @@
-# Python
+# # Python
+# __pycache__/
+# *.py[cod]
+# *$py.class
+# *.egg-info/
+# .eggs/
+# dist/
+
+# # Virtual Environment
+# .venv/
+# env/
+# venv/
+
+# # Database, Photos & Real Voter Data Safety (Section 35)
+# data/
+# photos/
+# *.db
+# *.sqlite3
+# *.sqlite
+# *.vlsync
+# test-data/real*
+# test-data/*.pdf
+# !test-data/.gitkeep
+# validation-results/
+
+# # Pytest / Coverage
+# .pytest_cache/
+# .coverage
+# htmlcov/
+
+# # Flutter / Dart
+# .dart_tool/
+# .flutter-plugins
+# .flutter-plugins-dependencies
+# .packages
+# build/
+# *.iml
+# .idea/
+
+
+# ==========================================
+# PYTHON
+# ==========================================
 __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
 .eggs/
-dist/
+wheels/
+pip-wheel-metadata/
 
-# Virtual Environment
+# ==========================================
+# VIRTUAL ENVIRONMENTS
+# ==========================================
 .venv/
 env/
 venv/
 
-# Database, Photos & Real Voter Data Safety (Section 35)
+# ==========================================
+# SECRETS AND ENVIRONMENT FILES
+# ==========================================
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ==========================================
+# DATABASES AND SENSITIVE ELECTORAL DATA
+# ==========================================
 data/
 photos/
+validation-results/
+
 *.db
-*.sqlite3
 *.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+
+# Encrypted transfer containers may contain real voter data
 *.vlsync
+
+# Real electoral-roll source files
 test-data/real*
 test-data/*.pdf
 !test-data/.gitkeep
-validation-results/
 
-# Pytest / Coverage
+# =========================================
+# Sensitive electoral-roll data
+# =========================================A
+tests/test-data/*.pdf
+tests/test-data/real*
+
+# Sensitive electoral-roll data
+tests/test-data/*.pdf
+tests/test-data/real*
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# ==========================================
+# LOGS AND REPORTS
+# ==========================================
+*.log
+logs/
 .pytest_cache/
 .coverage
 htmlcov/
 
-# Flutter / Dart
+# ==========================================
+# FLUTTER / DART
+# ==========================================
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
@@ -36,3 +130,17 @@ htmlcov/
 build/
 *.iml
 .idea/
+
+# ==========================================
+# EDITORS
+# ==========================================
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ==========================================
+# GENERATED OUTPUT
+# ==========================================
+dist/
