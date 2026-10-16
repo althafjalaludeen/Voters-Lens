@@ -12,7 +12,6 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.8
   sqlite3: ^2.5.0
-  sqlite3_flutter_libs: ^0.5.24
   flutter_riverpod: ^2.6.1
   intl: ^0.20.2
   path: ^1.9.1
@@ -22,6 +21,8 @@ dependencies:
   crypto: ^3.0.7
   file_picker: ^13.1.0
   share_plus: ^13.3.1
+  sqlcipher_flutter_libs: 0.5.5
+  flutter_secure_storage: 11.2.0
 
 dev_dependencies:
   flutter_test:
