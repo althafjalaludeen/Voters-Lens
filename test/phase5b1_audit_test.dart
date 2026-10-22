@@ -348,9 +348,9 @@ void main() {
     test('5. Re-opening on-disk database after bootstrap preserves consistency across restart', () async {
       final diskDbPath = '${tempDir.path}/persistent_voterlens.db';
 
-      // Stage 1: Bootstrap roll on disk DB
+      // Stage 1: Bootstrap roll on disk DB (explicitly unencrypted diagnostic test)
       {
-        final diskDb = AppDatabase.open(customPath: diskDbPath);
+        final diskDb = AppDatabase.open(customPath: diskDbPath, allowPlaintext: true);
         final diskEngine = VLSyncFileEngine(diskDb);
 
         final snapFile = await createAuditSnapshotFile(
@@ -370,9 +370,9 @@ void main() {
         diskDb.close();
       }
 
-      // Stage 2: Re-open DB simulating fresh app launch
+      // Stage 2: Re-open DB simulating fresh app launch (explicitly unencrypted diagnostic test)
       {
-        final reopenedDb = AppDatabase.open(customPath: diskDbPath);
+        final reopenedDb = AppDatabase.open(customPath: diskDbPath, allowPlaintext: true);
         final active = reopenedDb.getActiveRoll();
         expect(active, isNotNull);
         expect(active!.id, 'roll-disk-01');

@@ -14,7 +14,8 @@ void main() {
         fail('Database file not found at $dbPath');
       }
 
-      final db = AppDatabase.open(customPath: dbPath);
+      // Diagnostic read test intentionally inspects existing unencrypted sample roll
+      final db = AppDatabase.open(customPath: dbPath, allowPlaintext: true);
 
       // 1. Check active roll
       final activeRoll = db.getActiveRoll();

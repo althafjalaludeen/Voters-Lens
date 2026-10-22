@@ -493,8 +493,8 @@ void main() {
       final dbPath = '${tempDir.path}/test_restart.db';
 
       try {
-        // Initial session: establish PIN and trigger 3 failed attempts
-        final db1 = AppDatabase.open(customPath: dbPath);
+        // Initial session: establish PIN and trigger 3 failed attempts (unencrypted test file)
+        final db1 = AppDatabase.open(customPath: dbPath, allowPlaintext: true);
         final pinAuth1 = PinAuthenticator(db1);
         await pinAuth1.setupSupervisorPin('849201', performedBy: 'admin');
 
@@ -508,7 +508,7 @@ void main() {
         db1.close();
 
         // Second session: simulate application kill and restart
-        final db2 = AppDatabase.open(customPath: dbPath);
+        final db2 = AppDatabase.open(customPath: dbPath, allowPlaintext: true);
         final pinAuth2 = PinAuthenticator(db2);
 
         // Verification must STILL be locked even with correct PIN
@@ -519,7 +519,9 @@ void main() {
 
         db2.close();
       } finally {
-        tempDir.deleteSync(recursive: true);
+        try {
+          tempDir.deleteSync(recursive: true);
+        } catch (_) {}
       }
     });
   });

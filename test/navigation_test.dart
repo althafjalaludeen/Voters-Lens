@@ -5,12 +5,28 @@ import 'package:voterlens/app/app.dart';
 import 'package:voterlens/core/constants/field_status.dart';
 import 'package:voterlens/presentation/providers/user_role_provider.dart';
 
+import 'package:voterlens/core/database/app_database.dart';
+import 'package:voterlens/presentation/providers/database_provider.dart';
+
 void main() {
   group('MainNavigationShell Tests', () {
+    late AppDatabase inMemoryDb;
+
+    setUp(() {
+      inMemoryDb = AppDatabase.openInMemory();
+    });
+
+    tearDown(() {
+      inMemoryDb.close();
+    });
+
     testWidgets('renders all bottom navigation items', (tester) async {
       await tester.pumpWidget(
-        const ProviderScope(
-          child: VoterLensApp(),
+        ProviderScope(
+          overrides: [
+            databaseProvider.overrideWithValue(inMemoryDb),
+          ],
+          child: const VoterLensApp(),
         ),
       );
       await tester.pumpAndSettle();
@@ -24,8 +40,11 @@ void main() {
 
     testWidgets('switches tabs smoothly when tapping bottom navigation bar', (tester) async {
       await tester.pumpWidget(
-        const ProviderScope(
-          child: VoterLensApp(),
+        ProviderScope(
+          overrides: [
+            databaseProvider.overrideWithValue(inMemoryDb),
+          ],
+          child: const VoterLensApp(),
         ),
       );
       await tester.pumpAndSettle();

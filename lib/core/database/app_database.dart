@@ -1,9 +1,12 @@
 import 'dart:io';
 import 'package:path/path.dart' as p;
+import 'package:sqlcipher_flutter_libs/sqlcipher_flutter_libs.dart';
+import 'package:sqlite3/open.dart' as sqlite_open;
 import 'package:sqlite3/sqlite3.dart';
 import 'package:uuid/uuid.dart';
 
 import '../constants/field_status.dart';
+import '../security/database_key_manager.dart';
 import '../../domain/entities/area_statistics.dart';
 import '../../domain/entities/field_status_record.dart';
 import '../../domain/entities/filter_criteria.dart';
@@ -12,12 +15,66 @@ import '../../domain/entities/roll_version.dart';
 import '../../domain/entities/sync_models.dart';
 import '../../domain/entities/voter.dart';
 
+/// Exception thrown when an existing database is plaintext and requires migration before encrypted use.
+class PlaintextDatabaseMigrationRequiredException implements Exception {
+  final String path;
+  const PlaintextDatabaseMigrationRequiredException(this.path);
+
+  @override
+  String toString() =>
+      'PlaintextDatabaseMigrationRequiredException: Plaintext SQLite database detected at $path. Migration to encrypted SQLCipher storage is required.';
+}
+
+/// Exception thrown when the native SQLCipher encryption library is not active or unavailable.
+class SqlCipherUnavailableException implements Exception {
+  final String message;
+  const SqlCipherUnavailableException([
+    this.message = 'SQLCipher native library is not active on this platform. Refusing plaintext fallback for secure database.',
+  ]);
+
+  @override
+  String toString() => 'SqlCipherUnavailableException: $message';
+}
+
+/// Exception thrown when a database file is truncated, unreadable, or in an invalid state.
+class DatabaseCorruptedException implements Exception {
+  final String message;
+  const DatabaseCorruptedException([
+    this.message = 'Database file is corrupted, truncated, or unreadable.',
+  ]);
+
+  @override
+  String toString() => 'DatabaseCorruptedException: $message';
+}
+
+/// Represents the detected file-level format of a database on disk.
+enum DatabaseFileState {
+  absent,
+  plaintext,
+  encrypted,
+  corruptedOrUncertain,
+}
+
 class AppDatabase {
   final Database _db;
   final String path;
   final Uuid _uuid = const Uuid();
 
   static String? _resolvedDefaultDirectory;
+  static bool _sqlCipherPlatformInitialized = false;
+
+  /// Initializes SQLCipher dynamic library overrides on supported platforms (such as Android).
+  static Future<void> initializeSqlCipherPlatform() async {
+    if (_sqlCipherPlatformInitialized) return;
+    if (Platform.isAndroid) {
+      await applyWorkaroundToOpenSqlCipherOnOldAndroidVersions();
+      sqlite_open.open.overrideFor(
+        sqlite_open.OperatingSystem.android,
+        openCipherOnAndroid,
+      );
+    }
+    _sqlCipherPlatformInitialized = true;
+  }
 
   static void setDefaultDirectory(String dir) {
     _resolvedDefaultDirectory = dir;
@@ -38,12 +95,169 @@ class AppDatabase {
     return 'data/voterlens.db';
   }
 
+  /// Inspects the first 16 bytes of [dbPath] to determine its database format state.
+  static DatabaseFileState detectDatabaseState(String dbPath) {
+    final file = File(dbPath);
+    if (!file.existsSync()) {
+      return DatabaseFileState.absent;
+    }
+    final len = file.lengthSync();
+    if (len == 0) {
+      return DatabaseFileState.corruptedOrUncertain;
+    }
+    if (len < 16) {
+      return DatabaseFileState.corruptedOrUncertain;
+    }
+    final headerBytes = file.openSync().readSync(16);
+    // Standard unencrypted SQLite header: "SQLite format 3\000"
+    const sqliteHeader = [
+      0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66,
+      0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00,
+    ];
+    bool isPlaintext = true;
+    for (int i = 0; i < 16; i++) {
+      if (headerBytes[i] != sqliteHeader[i]) {
+        isPlaintext = false;
+        break;
+      }
+    }
+    if (isPlaintext) {
+      return DatabaseFileState.plaintext;
+    }
+    return DatabaseFileState.encrypted;
+  }
+
   AppDatabase(this._db, {required this.path});
 
   Database get rawDb => _db;
 
-  static AppDatabase open({String? customPath}) {
+  /// Returns true if the underlying SQLite library reports active SQLCipher support.
+  bool get isSqlCipherActive {
+    try {
+      final res = _db.select('PRAGMA cipher_version;');
+      return res.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Opens a database at [customPath] or the default database path.
+  ///
+  /// - If [encryptionKey] is supplied, opens as encrypted SQLCipher database.
+  /// - If an existing encrypted database is detected without a key, throws [DatabaseKeyNotFoundException].
+  /// - If an existing plaintext database is detected without [allowPlaintext] explicitly true,
+  ///   throws [PlaintextDatabaseMigrationRequiredException].
+  /// - Plaintext access is NEVER implicitly permitted; [allowPlaintext] must be explicitly true.
+  static AppDatabase open({
+    String? customPath,
+    String? encryptionKey,
+    bool? allowPlaintext,
+    bool bypassCipherCheck = false,
+  }) {
     final String dbPath = customPath ?? getDefaultDatabasePath();
+    final state = detectDatabaseState(dbPath);
+
+    final bool effectiveAllowPlaintext = allowPlaintext == true;
+
+    switch (state) {
+      case DatabaseFileState.corruptedOrUncertain:
+        throw const DatabaseCorruptedException(
+          'Database file is malformed, truncated, or unreadable.',
+        );
+
+      case DatabaseFileState.plaintext:
+        if (!effectiveAllowPlaintext) {
+          throw PlaintextDatabaseMigrationRequiredException(dbPath);
+        }
+        return _openPlaintext(dbPath);
+
+      case DatabaseFileState.encrypted:
+        if (encryptionKey == null || encryptionKey.isEmpty) {
+          throw const DatabaseKeyNotFoundException(
+            'Database encryption key not found for existing encrypted database.',
+          );
+        }
+        return _openEncrypted(
+          dbPath: dbPath,
+          encryptionKey: encryptionKey,
+          isNewDatabase: false,
+          bypassCipherCheck: bypassCipherCheck,
+        );
+
+      case DatabaseFileState.absent:
+        if (encryptionKey != null && encryptionKey.isNotEmpty) {
+          return _openEncrypted(
+            dbPath: dbPath,
+            encryptionKey: encryptionKey,
+            isNewDatabase: true,
+            bypassCipherCheck: bypassCipherCheck,
+          );
+        } else if (effectiveAllowPlaintext) {
+          return _openPlaintext(dbPath);
+        } else {
+          throw const DatabaseKeyNotFoundException(
+            'Cannot create secure database: no encryption key was provided.',
+          );
+        }
+    }
+  }
+
+  /// Asynchronously opens or initializes an encrypted database using [DatabaseKeyManager].
+  ///
+  /// - Retrieves existing key if database exists.
+  /// - Safely generates initial key only when database does not exist.
+  /// - Rejects plaintext databases and reports migration requirement.
+  static Future<AppDatabase> openSecure({
+    String? customPath,
+    DatabaseKeyManager? keyManager,
+    String? encryptionKey,
+    bool allowCreate = true,
+    bool bypassCipherCheck = false,
+  }) async {
+    final String dbPath = customPath ?? getDefaultDatabasePath();
+    final state = detectDatabaseState(dbPath);
+
+    if (state == DatabaseFileState.corruptedOrUncertain) {
+      throw const DatabaseCorruptedException(
+        'Database file is malformed, truncated, or unreadable.',
+      );
+    }
+
+    if (state == DatabaseFileState.plaintext) {
+      throw PlaintextDatabaseMigrationRequiredException(dbPath);
+    }
+
+    final mgr = keyManager ?? SecureStorageDatabaseKeyManager();
+    String? resolvedKey = encryptionKey;
+
+    if (resolvedKey == null) {
+      if (state == DatabaseFileState.encrypted) {
+        final bool hasKey = await mgr.hasKey();
+        if (!hasKey) {
+          throw const DatabaseKeyNotFoundException(
+            'Encrypted database exists, but its encryption key is missing from secure storage.',
+          );
+        }
+        resolvedKey = await mgr.getKey();
+      } else if (state == DatabaseFileState.absent) {
+        if (!allowCreate) {
+          throw const DatabaseKeyNotFoundException(
+            'Database does not exist and database creation was not permitted.',
+          );
+        }
+        resolvedKey = await mgr.initializeKey();
+      }
+    }
+
+    return open(
+      customPath: dbPath,
+      encryptionKey: resolvedKey,
+      allowPlaintext: false,
+      bypassCipherCheck: bypassCipherCheck,
+    );
+  }
+
+  static AppDatabase _openPlaintext(String dbPath) {
     final parentDir = File(dbPath).parent;
     if (!parentDir.existsSync()) {
       try {
@@ -55,6 +269,76 @@ class AppDatabase {
     db.execute('PRAGMA foreign_keys = ON;');
     db.execute('PRAGMA journal_mode = WAL;');
     db.execute('PRAGMA synchronous = NORMAL;');
+
+    final appDb = AppDatabase(db, path: dbPath);
+    appDb._ensureSchema();
+    return appDb;
+  }
+
+  static AppDatabase _openEncrypted({
+    required String dbPath,
+    required String encryptionKey,
+    required bool isNewDatabase,
+    bool bypassCipherCheck = false,
+  }) {
+    final trimmedKey = encryptionKey.trim().toLowerCase();
+    // Validate format strictly (must be 64-character hex)
+    if (!RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(trimmedKey)) {
+      throw const DatabaseKeyCorruptedException(
+        'Supplied database encryption key is malformed or corrupted.',
+      );
+    }
+
+    final parentDir = File(dbPath).parent;
+    if (!parentDir.existsSync()) {
+      try {
+        parentDir.createSync(recursive: true);
+      } catch (_) {}
+    }
+
+    final db = sqlite3.open(dbPath);
+
+    // Apply key using SQLCipher raw key hex syntax: PRAGMA key = "x'<64 hex chars>'";
+    db.execute('PRAGMA key = "x\'$trimmedKey\'";');
+
+    // Check whether native SQLCipher is active
+    bool cipherActive = false;
+    try {
+      final v = db.select('PRAGMA cipher_version;');
+      cipherActive = v.isNotEmpty;
+    } catch (_) {}
+
+    if (!cipherActive && !bypassCipherCheck) {
+      db.dispose();
+      throw const SqlCipherUnavailableException(
+        'SQLCipher native library is not active on this platform. Refusing plaintext fallback.',
+      );
+    }
+
+    // Read validation: Ensure key decrypts and reads successfully before performing PRAGMAs or schema operations
+    try {
+      db.select('SELECT count(*) FROM sqlite_master;');
+      if (cipherActive) {
+        try {
+          db.execute('PRAGMA cipher_memory_security = ON;');
+        } catch (_) {}
+      }
+      db.execute('PRAGMA temp_store = MEMORY;');
+      db.execute('PRAGMA foreign_keys = ON;');
+      db.execute('PRAGMA journal_mode = WAL;');
+      db.execute('PRAGMA synchronous = NORMAL;');
+    } on SqliteException catch (e) {
+      db.dispose();
+      throw DatabaseDecryptionException(
+        'Failed to decrypt database. Key may be invalid or database file corrupted. (code: ${e.extendedResultCode})',
+      );
+    } catch (e) {
+      db.dispose();
+      if (e is DatabaseDecryptionException) rethrow;
+      throw DatabaseDecryptionException(
+        'Database authentication check failed: ${e.runtimeType}',
+      );
+    }
 
     final appDb = AppDatabase(db, path: dbPath);
     appDb._ensureSchema();
